@@ -1,0 +1,601 @@
+---
+title: " Tweet tone analysis "
+---
+## Research objectives and hypothesis to be tested 
+
+Research objectives were as follows:
+1. Determine the presence of a correlation between a tweet author and it's emotional coloring
+2. Determine if there is a correlation between the date range and the emotional coloring of tweets
+3. Identify words that strongly influence the emotional coloring of a text
+4. Create a model that predicts the emotional coloring of a tweet 
+
+Hypothesis were as follows:
+H0: There is no correlation between the author and the emotional coloring of his tweets
+H1: There is a correlation between the author and the emotional coloring of his tweets
+
+H0: There is no correlation between the date and the emotional color of the tweet
+H1: There is a correlation between the date and the emotional color of the tweet 
+
+
+## Sentiment140 dataset with 1,6 million tweets
+
+Data: https://www.kaggle.com/kazanova/sentiment140
+
+The dataset contains information about 1,600,000 tweets, and their emotional coloring.
+
+Variables:
+
+  - Target: contains information about the emotional coloring of tweets. The value "0" is used for negative tweets, the value "4" is used for positively colored tweets.
+The number of positively colored tweets is equal to the number of negatively colored tweets.
+
+  - ID: contains a unique identifier for the tweet. 
+  
+  - Date: contains the date and time of the posted tweet. To further work with the values of this field, there was created a new field containing only the date of the tweet. There were received 48 dates from April to June 2009.
+  
+  - Author: contains the nicknames of the tweet authors. In total, the dataset contains 659,775 unique authors. 
+  
+## Import required libraries
+```{r}
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("ggplot2")
+install.packages("stringi")
+install.packages("tidyverse")
+install.packages("glmnet", repos = "https://cran.us.r-project.org")
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(stringi)
+library(glmnet)
+
+
+```
+
+## 1. Data 
+
+### 1.1 Read files with data
+
+```{r}
+date_1 <- read.csv("C:/Users/Алина/Desktop/проект R/project.csv", sep = ",")
+date_2 <- read.csv("C:/Users/Алина/Desktop/проект R/dev_output.csv", sep = ",")
+date_3 <- read.csv("C:/Users/Алина/Desktop/проект R/pr.csv", sep = ",")
+date_7 <- read.csv("C:/Users/Алина/Desktop/проект R/pr_dates.csv", sep = ",")
+date_8 <- read.csv("C:/Users/Алина/Desktop/проект R/pr_sr.csv", sep = ",")
+```
+
+### 1.2 Descriptive statistics and data visualization of the number of tweets:
+
+1. Counting the number of tweets. 
+
+2. Distribution of tweets by emotional color. 
+
+
+```{r}
+project2 <- data.frame(date_2)
+nrow(project2)
+
+p <- project2 %>%
+  count(target)
+
+pr <- data.frame(date_3)
+dates <- pr %>%
+  count(date_s)
+
+ggplot(data = pr, aes(x = target, y = id, color = target)) +
+  geom_point() + 
+  labs(x = "Target", 
+       y = "Twits")
+
+barplot(table(project2$target))
+
+ggplot(data = pr, aes(x = date_s, group = target, fill = target)) +
+  geom_density(alpha = 0.5)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+ks.test(dates$n, "pnorm", mean=mean(dates$n), sd=sd(dates$n))
+barplot(table(dates$n))
+dates %>%
+  summary(n)
+```
+
+## 1.3.Descriptive statistics on the number of tweets for each date. 
+
+1. Distribution of the number of tweets by date assessment of distribution using the Kolmogorov-Smirnov test and we also conducted a t-test.
+
+According to the test results, the data is distributed abnormally.
+
+2. 
+```{r}
+pr_date_s <- data.frame(date_7)
+pr <- merge(x = pr, y = pr_date_s, by = 'date_s', all = TRUE)
+
+chisq.test(table(pr$target, pr$date))
+
+t.test(date_8$sr)
+
+pr_sr <- data.frame(date_8)
+pr <- merge(x = pr, y = pr_sr, by = 'date_s', all = TRUE)
+pr_date_s <- merge(x = pr_date_s, y = pr_sr, by = 'date_s', all = TRUE)
+
+ggplot(data = pr_date_s, aes(x = date_s, y = sr, color = sr)) +
+  geom_point() +
+  labs(x = "Data", 
+       y = "Mean") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(data = pr, aes(x = date_s, y = id, color = target)) +
+  geom_point() + 
+  labs(x = "Date", 
+       y = "Twits") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+### 1.4.Descriptive statistics of the number of authors and assessment of distribution using the Kolmogorov-Smirnov test.
+
+1. Distribution of the authors using the Kolmogorov-Smirnov test and we also conducted a t-test.
+
+According to the test results, the data is distributed abnormally.
+
+```{r}
+person <- pr %>%
+  count(author)
+
+pr_person <- read.csv("C:/Users/Алина/Desktop/проект R/pr_person.csv", sep = ",")
+pr_per <- data.frame(pr_person)
+
+authors <- read.csv("C:/Users/Алина/Desktop/проект R/sr_authors.csv", sep = ",")
+
+pr <- merge(x = pr, y = pr_person, by = 'author', all = TRUE)
+
+ks.test(person$n, "pnorm", mean=mean(person$n), sd=sd(person$n))
+person %>%
+  summary(n)
+
+t.test(authors$target)
+
+```
+
+### 3. Data preprocessing
+
+Dividing tweets into separate words significantly increases the size of the dataset, for further work it was necessary to reduce the dataset.
+
+1. To preserve the ratio of negative and positive tweets, we divided the dataset into positive and negative datasets, then reduced the datasets by 700,000 entries.
+
+2. In the second step, the text was split into words, while maintaining the emotional tweet.
+
+3. In the third step, the punctuation marks were removed. 
+
+```{r}
+d_n <-subset(pr, target %in% 0)
+d_p <-subset(pr, target %in% 4)
+d_n <- head(d_n, -700000)
+d_p <- head(d_p, -700000)
+
+d_n_w<- tidyr::separate_rows(d_n, text, sep = " ", convert = FALSE)
+d_p_w <- tidyr::separate_rows(d_p, text, sep = " ", convert = FALSE)
+
+
+d_n_w$text <- gsub("[^'[:lower:] ]", "", d_n_w$text)
+d_p_w$text <- gsub("[^'[:lower:] ]", "", d_p_w$text)
+
+```
+
+## 4. Analysis of Data
+
+### 4.1 Creation of frequency dictionaries
+
+1. At the first stage, two frequency dictionaries were created from positively and negatively colored datasets. After that the dictionaries were sorted in descending order.
+
+2. At the second stage, we excluded words with a frequency of less than 2. Words with a low frequency can be considered contextual to other users. 
+
+```{r}
+pos <- d_p_w %>%
+  count(text)
+pos <- pos[with(pos, order(-n)), ]
+pos <- pos[-1,]
+pos$target <- '4'
+
+neg <- d_n_w %>%
+  count(text)
+neg <- neg[with(neg, order(-n)), ]
+neg <- neg[-1,]
+neg$target <- '0'
+
+pos <-subset(pos, n > 2)
+neg <-subset(neg, n > 2)
+```
+
+### 4.2 Combining the tables
+
+1. We combined the tables. For each word we calculated the ratio of its positive use to the total one.
+
+2. For words that were not used in negative tweets, the value was set equal to "1". For words that were not used in positively colored tweets, the value was set equal to "0".
+
+3. To do this, we divided the dataset into three: 
+    - words are found in both positive and negative tweets
+    - words are found only in positive tweets
+    - words are found only in negative tweets.
+    
+4. We've sorted the mixed dataset by positive word frequency, and the rest of the dataset by word frequency. 
+
+5. The frequency of words in a mixed dataset is significantly higher than that of a negative and positive dataset. Therefore, to assess the impact of "positive" words on the emotional coloring of tweets, we used the first 5 words from the positive dataset and the first 10 words from the mixed dataset.
+
+6. As a result of processing, we got two dictionaries of "negative" and "positive" words. 
+
+```{r}
+
+a <- merge(x = pos, y = neg, by = 'text', all = TRUE)
+a$PvsN <- a$n.x/(a$n.y + a$n.x)
+
+a2 <- subset(a, is.na(a$n.x))
+a2$PvsN <- '0'
+a3 <- subset(a, is.na(a$n.y))
+a3$PvsN <- '1'
+a <- subset(a, !is.na(a$PvsN))
+
+a <- a[with(a, order(-a$PvsN)), ]
+names(a2)[names(a2) == 'ne'] <- 'n.y'
+
+a2 <- a2[with(a2, order(-n.y)), ]
+a3 <- a3[with(a3, order(-n.x)), ]
+
+positiv <- head(a, -12232)
+a3 <- head(a3, -7235)
+positiv <- rbind(a3, positiv)
+
+a <- a[with(a, order(a$PvsN)), ]
+negative <- head(a, -12232)
+a2 <- head(a2, -5103)
+negative <- rbind(a2, negative)
+
+```
+
+## 5. Working with the main dataset
+
+1. To test the influence of words on the emotional coloring of tweets, we will create flags for the occurrence of words in the text of tweets.
+
+### 5.1 Working with the negative vocabulary: 
+
+```{r}
+
+
+pr_d <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "dreading"))
+names(pr_d)[names(pr_d) == 'has_w <- str_detect(twit, "dreading")'] <- 'dreading'
+pr_d %>%
+  count(dreading)
+
+pr_boo <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "boooo"))
+names(pr_boo)[names(pr_boo) == 'has_w <- str_detect(twit, "boooo")'] <- 'boooo'
+pr_boo %>%
+  count(boooo)
+
+pr_dissapointed <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "dissapointed"))
+names(pr_dissapointed)[names(pr_dissapointed) == 'has_w <- str_detect(twit, "dissapointed")'] <- 'dissapointed'
+pr_dissapointed %>%
+  count(dissapointed)
+
+pr_destroyed <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "destroyed"))
+names(pr_destroyed)[names(pr_destroyed) == 'has_w <- str_detect(twit, "destroyed")'] <- 'destroyed'
+pr_destroyed %>%
+  count(destroyed)
+
+pr_noes <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "noes"))
+names(pr_noes)[names(pr_noes) == 'has_w <- str_detect(twit, "noes")'] <- 'noes'
+pr_noes %>%
+  count(noes)
+
+pr_lean <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "lean"))
+names(pr_lean)[names(pr_lean) == 'has_w <- str_detect(twit, "lean")'] <- 'lean'
+pr_lean %>%
+  count(lean)
+
+pr_gutted <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "gutted"))
+names(pr_gutted)[names(pr_gutted) == 'has_w <- str_detect(twit, "gutted")'] <- 'gutted'
+pr_gutted %>%
+  count(gutted)
+
+pr_ache <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "ache"))
+names(pr_ache)[names(pr_ache) == 'has_w <- str_detect(twit, "ache")'] <- 'ache'
+pr_ache %>%
+  count(ache)
+
+pr_sadly <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "sadly"))
+names(pr_sadly)[names(pr_sadly) == 'has_w <- str_detect(twit, "sadly")'] <- 'sadly'
+pr_sadly %>%
+  count(sadly)
+
+pr_bummed <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "bummed"))
+names(pr_bummed)[names(pr_bummed) == 'has_w <- str_detect(twit, "bummed")'] <- 'bummed'
+pr_bummed %>%
+  count(bummed)
+
+pr_coughing <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "coughing"))
+names(pr_coughing)[names(pr_coughing) == 'has_w <- str_detect(twit, "coughing")'] <- 'coughing'
+pr_coughing %>%
+  count(coughing)
+
+pr_sad <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "sad"))
+names(pr_sad)[names(pr_sad) == 'has_w <- str_detect(twit, "sad")'] <- 'sad'
+pr_sad %>%
+  count(sad)
+
+pr_lonely <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "lonely"))
+names(pr_lonely)[names(pr_lonely) == 'has_w <- str_detect(twit, "lonely")'] <- 'lonely'
+pr_lonely %>%
+  count(lonely)
+
+pr_eadache <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "eadache"))
+names(pr_eadache)[names(pr_eadache) == 'has_w <- str_detect(twit, "eadache")'] <- 'eadache'
+pr_eadache %>%
+  count(eadache)
+
+pr_vet <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "vet"))
+names(pr_vet)[names(pr_vet) == 'has_w <- str_detect(twit, "vet")'] <- 'vet'
+pr_vet %>%
+  count(vet)
+
+```
+
+
+### 5.2 Working with the positive vocabulary: 
+
+```{r}
+pr_night <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "night"))
+names(pr_night)[names(pr_night) == 'has_w <- str_detect(twit, "night")'] <- 'night'
+pr_night %>%
+  count(night)
+
+pr_funniest <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "funniest"))
+names(pr_funniest)[names(pr_funniest) == 'has_w <- str_detect(twit, "funniest")'] <- 'funniest'
+pr_funniest %>%
+  count(funniest)
+
+pr_welcome <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "welcome"))
+names(pr_welcome)[names(pr_welcome) == 'has_w <- str_detect(twit, "welcome")'] <- 'welcome'
+pr_welcome %>%
+  count(welcome)
+
+pr_boom <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "boom"))
+names(pr_boom)[names(pr_boom) == 'has_w <- str_detect(twit, "boom")'] <- 'boom'
+pr_boom %>%
+  count(boom)
+
+pr_followfriday <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "followfriday"))
+names(pr_followfriday)[names(pr_followfriday) == 'has_w <- str_detect(twit, "followfriday")'] <- 'followfriday'
+pr_followfriday %>%
+  count(followfriday)
+
+pr_thankyou <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "thankyou"))
+names(pr_thankyou)[names(pr_thankyou) == 'has_w <- str_detect(twit, "thankyou")'] <- 'thankyou'
+pr_thankyou %>%
+  count(thankyou)
+
+pr_compliment <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "compliment"))
+names(pr_compliment)[names(pr_compliment) == 'has_w <- str_detect(twit, "compliment")'] <- 'compliment'
+pr_compliment %>%
+  count(compliment)
+
+pr_heya <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "heya"))
+names(pr_heya)[names(pr_heya) == 'has_w <- str_detect(twit, "heya")'] <- 'heya'
+pr_heya %>%
+  count(heya)
+
+pr_ownload <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "ownload"))
+names(pr_ownload)[names(pr_ownload) == 'has_w <- str_detect(twit, "ownload")'] <- 'ownload'
+pr_ownload %>%
+  count(ownload)
+
+pr_xcellent <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "xcellent"))
+names(pr_xcellent)[names(pr_xcellent) == 'has_w <- str_detect(twit, "xcellent")'] <- 'xcellent'
+pr_xcellent %>%
+  count(xcellent)
+
+pr_elcome <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "elcome"))
+names(pr_elcome)[names(pr_elcome) == 'has_w <- str_detect(twit, "elcome")'] <- 'elcome'
+pr_elcome %>%
+  count(elcome)
+
+pr_acquiao <- tibble(twit = pr$text, id = pr$id, target = pr$target) %>% 
+  mutate(has_w <- str_detect(twit, "acquiao"))
+names(pr_acquiao)[names(pr_acquiao) == 'has_w <- str_detect(twit, "acquiao")'] <- 'acquiao'
+pr_acquiao %>%
+  count(acquiao)
+
+```
+
+## 6 Correlations
+
+### 6.1 Correlations for "positive dataset"
+
+1. We calculated the Chi-squared test between the emotional coloring of a tweet and individual "positive" words. 
+
+2. According to the results of this test, we found out that emotional coloring of the tweet and individual "positive" words are not independent.
+
+```{r}
+pr_positive <- merge(x = pr_acquiao, y = pr_elcome, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_xcellent, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_ownload, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_heya, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_compliment, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_thankyou, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_followfriday, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_boom, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_welcome, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_funniest, by = c('id', 'twit', 'target'), all = TRUE)
+pr_positive <- merge(x = pr_positive, y = pr_night, by = c('id', 'twit', 'target'), all = TRUE)
+
+
+chisq.test(table(pr_positive$target, pr_positive$acquiao))
+chisq.test(table(pr_positive$target, pr_positive$elcome))
+chisq.test(table(pr_positive$target, pr_positive$xcellent))
+chisq.test(table(pr_positive$target, pr_positive$ownload))
+chisq.test(table(pr_positive$target, pr_positive$heya))
+chisq.test(table(pr_positive$target, pr_positive$compliment))
+chisq.test(table(pr_positive$target, pr_positive$thankyou))
+chisq.test(table(pr_positive$target, pr_positive$followfriday))
+chisq.test(table(pr_positive$target, pr_positive$boom))
+chisq.test(table(pr_positive$target, pr_positive$welcome))
+chisq.test(table(pr_positive$target, pr_positive$funniest))
+chisq.test(table(pr_positive$target, pr_positive$night))
+
+positiv <- head(a, -12000)
+positiv <- rbind(a3, positiv)
+
+write.csv(positiv, "C:/Users/Алина/Desktop/проект R/pos.csv")
+date_4 <- read.csv("C:/Users/Алина/Desktop/проект R/pr_pos.csv", sep = ",")
+pr_pos <- data.frame(date_4)
+
+chisq.test(table(pr_pos$target, pr_pos$flag))
+``` 
+
+
+### 6.2 Correlations for "negative dataset"
+
+1. We calculated the Chi-squared test between the emotional coloring of a tweet and individual "negative" words. 
+
+2. According to the results of this test, we found out that emotional coloring of the tweet and individual "negative" words are not independent.
+
+```{r}
+pr_negative <- merge(x = pr_d, y = pr_boo, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_dissapointed, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_noes, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_destroyed, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_lean, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_gutted, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_ache, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_sadly, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_bummed, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_coughing, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_vet, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_eadache, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_lonely, by = c('id', 'twit', 'target'), all = TRUE)
+pr_negative <- merge(x = pr_negative, y = pr_sad, by = c('id', 'twit', 'target'), all = TRUE)
+
+
+chisq.test(table(pr_negative$target, pr_negative$boooo))
+chisq.test(table(pr_negative$target, pr_negative$dissapointed))
+chisq.test(table(pr_negative$target, pr_negative$noes))
+chisq.test(table(pr_negative$target, pr_negative$destroyed))
+chisq.test(table(pr_negative$target, pr_negative$lean))
+chisq.test(table(pr_negative$target, pr_negative$gutted))
+chisq.test(table(pr_negative$target, pr_negative$ache))
+chisq.test(table(pr_negative$target, pr_negative$sadly))
+chisq.test(table(pr_negative$target, pr_negative$bummed))
+chisq.test(table(pr_negative$target, pr_negative$coughing))
+chisq.test(table(pr_negative$target, pr_negative$vet))
+chisq.test(table(pr_negative$target, pr_negative$eadache))
+chisq.test(table(pr_negative$target, pr_negative$lonely))
+chisq.test(table(pr_negative$target, pr_negative$sad))
+names(pr_negative)[names(pr_negative) == 'has_w <- str_detect(twit, "dreading")'] <- 'dreading'
+chisq.test(table(pr_negative$target, pr_negative$dreading))
+
+
+a <- a[with(a, order(a$PvsN)), ]
+negative <- head(a, -12000)
+negative <- rbind(a2, negative)
+
+write.csv(negative, "C:/Users/Алина/Desktop/проект R/neg2.csv")
+date_5 <- read.csv("C:/Users/Алина/Desktop/проект R/pr_neg.csv", sep = ",")
+pr_neg <- data.frame(date_5)
+
+chisq.test(table(pr_neg$target, pr_neg$flag_n))
+
+```
+
+
+```{r}
+```
+```{r}
+
+```
+
+## 8   Results
+
+### 8.1 Collecting the big dataset
+
+1. We collected all the data obtained to the big dataset. To do this, we merged previously created datasets together.
+
+2. We divided the data into train and test parts. To do this in both cases, we took the part of negative words, the part of positive words and collected them into one dataset.
+
+3. The train dataset contains 600 000 items and the test one contains 100 000 items.
+ 
+```{r}
+
+
+names(pr_positive)[names(pr_positive) == 'twit'] <- 'text'
+big_dataset <- merge(pr_positive, pr, by = c('target', 'id', 'text'), all = TRUE)
+
+names(pr_negative)[names(pr_negative) == 'twit'] <- 'text'
+big_dataset <- merge(big_dataset, pr_negative, by = c('target', 'id', 'text'), all = TRUE)
+big_dataset <- merge(big_dataset, pr_pos, by = c('target', 'id', 'text', 'date', 'mark', 'author'), all = TRUE)
+big_dataset <- merge(big_dataset, pr_neg, by = c('target', 'id', 'text', 'date', 'mark', 'author'), all = TRUE)
+
+part_neg <-subset(big_dataset, target %in% 0)
+part_pos <-subset(big_dataset, target %in% 4)
+
+positive2 <- head(part_pos, -300000)
+negative2 <- head(part_neg, -300000)
+
+train_dataset <- rbind(positive2, negative2)
+
+positive3 <- part_pos[-(1:50000), , drop = FALSE]
+negative3 <- part_neg[-(1:50000), , drop = FALSE]
+
+test_dataset <- rbind(positive3, negative3)
+
+```
+
+
+### 8.2 Calculations
+
+1. We calculated the Logistic Regression.
+
+```{r}
+X <- data.frame(test_dataset$date, test_dataset$flag, test_dataset$flag_n)
+y <- test_dataset$target
+fit <- glmnet(X,y)
+plot(fit)
+summary(fit)
+class(fit)
+```
+
+'''
+{r}
+
+
+'''
+
+
+Results
+To sum up, we had a task to establish a connection between the emotional coloring of tweets and the authors and the date of publication, and we confirmed it using calculations. We accepted our H1 hypothesis. We also built a regression graph that predicts these dependencies. 
